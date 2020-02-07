@@ -1,0 +1,362 @@
+#!/bin/bash
+
+dims(){
+	
+	#Create temp file to be used by function
+	dimsDataFilePath="dimsDataFile$$"
+	
+	trap "rm -f dimsDataFile$$;
+	 echo 'Trap signal received: exiting';
+	 exit 1" INT HUP TERM
+
+	#If the number of parameters is greater than 1, exit the script
+	if [ "$#" -gt "1" ]
+	then
+		echo "Dims requires 1 or 0 parameters" >&2
+		exit 1
+	fi
+	
+	#dims passed with zero arguments, cat stdin to datafilepath
+	if [ "$#" = "0" ]
+	then
+		cat > "$dimsDataFilePath"
+	
+	#dims passed with 1 argument, use file	
+	elif [ "$#" = "1" ]
+	then
+		if [ ! -f "$1" ] || [ ! -r "$1" ]
+		then
+			echo "File does not exist or cannot be read" >&2
+			exit 1
+		else
+			dimsDataFilePath=$1
+		fi
+	fi
+
+	rows=0
+	columns=0
+
+	while read myLine  
+	do
+		#for the first row, count the items in that row. This gives the number of columns
+		if test $rows -eq 0
+		then
+			for i in $myLine
+			do
+				(( columns++ ))
+			done
+		fi
+
+		#Add 1 to the row count
+		(( rows++ ))
+	done < $dimsDataFilePath
+
+	echo "$rows $columns"
+
+	#Delete temp files
+	rm -f dimsDataFile$$
+}
+
+transpose(){
+	#create temp files to be used by function
+	transposeDataFilePath="transposeDataFile$$"
+	rowColPath="rowColFile$$"
+	rowFilePath="rowFile$$"
+	colFilePath="colFile$$"
+	transposedMatrixFilePath="transposedMatrixFile$$"
+	finalFilePath="finalFile$$"
+
+	trap "rm -f rowColFile$$;
+	 rm -f transposeDataFile$$;
+	 rm -f colFile$$; 
+	 rm -f rowFile$$; 
+	 rm -f transposedMatrixFile$$;
+	 rm -f finalFile$$;
+	 echo 'Trap signal received: exiting'; exit 1" INT HUP TERM
+
+	#If the number of parameters is greater than 1, exit the script
+	if [ "$#" -gt "1" ]
+	then
+		echo "transpose requires 1 or 0 parameters" >&2
+		exit 1
+	fi
+
+	#If the number of parameters is equal to 1. Use the given file, if it is readable.
+	if [ "$#" = "1" ]
+	then
+		#if [ ! -f "$1" ] && [ ! -r "$1" ]
+		if [ ! -r "$1" ]
+		then
+			echo "File does not exist" >&2
+			exit 1
+		else
+			transposeDataFilePath=$1
+		fi
+
+	#transpose passed with zero arguments, cat stdin to datafilepath
+	elif [ "$#" = "0" ]
+	then
+		cat > "$transposeDataFilePath"
+	fi
+	
+	#Get the dims of given input so they can be used to loop the correct number of times while converting columns to rows
+	dims $transposeDataFilePath > $rowColPath
+
+	#Get the number of rows
+	cut -d " " -f 1 $rowColPath > $rowFilePath
+	#Get the number of columns
+	cut -d " " -f 2 $rowColPath > $colFilePath
+	#Save the number of rows and columns into variables instead of files
+	numRows=$(<$rowFilePath)
+	numCols=$(<$colFilePath)
+
+	i=1
+	while [ $i -le $numCols ]
+	do
+		#Get the i'th column and convert it's newline characters to tabs.
+		#This converts the column into a row. Then append new row to file.	
+		cut -f $i $transposeDataFilePath | tr "\n" "\t" >> $transposedMatrixFilePath
+		echo >> $transposedMatrixFilePath
+		(( i++ ))
+	done
+
+	#Cut everything but the file column which consists of only tabs.
+	cut --complement -f $(($numRows + 1)) $transposedMatrixFilePath > $finalFilePath
+
+	cat $finalFilePath
+	
+	#Delete temp files
+	rm -f rowColFile$$
+	rm -f transposeDataFile$$
+	rm -f colFile$$
+	rm -f rowFile$$
+	rm -f transposedMatrixFile$$
+	rm -f finalFile$$
+}
+
+mean(){
+	#create temp files to be used by the script
+	meanDataFilePath="meanFile$$"
+	meanTransposedFilePath="meanTransposedFile$$"
+
+	trap "rm -f meanFile$$;
+	 rm -f meanTransposedFile$$;
+	 echo 'Trap signal received: exiting';
+	 exit 1" INT HUP TERM
+
+	#mean passed with zero arguments, cat stdin to meanDataFilePath
+	if [ "$#" = "0" ]
+	then
+		cat > "$meanDataFilePath"
+
+	#mean passed with 1 argument
+	elif [ "$#" = "1" ]
+	then
+		#check that the argument (file name) both exists and is readable by the user
+		if [ -f "$1" ] && [ -r "$1" ]
+		then
+			meanDataFilePath=$1
+		
+		#the passed file is not readable, exit the script 
+		else
+			echo "File does not exist or can not be read." >&2
+			exit 1
+		fi
+	#Too many paremeters. exit the script.
+	else
+		echo "Too many parameters entered." >&2
+		exit 1
+	fi
+
+	#transpose the matrix so that columns become rows
+	#in this way we can 'read myLine' to do the mean calculation for each original column
+	#this allows me to skip counting the number of columns in my read loop
+	transpose $meanDataFilePath > $meanTransposedFilePath
+
+	#create empty string to hold vector of means
+	meanVector=""
+
+	#read the matrix one line at a time
+	while read myLine
+	do
+		#set sum, count, and mean to zero at the start of line processing
+		sum=0
+		count=0
+		mean=0
+
+		#loop over each number in the line
+		for i in $myLine
+		do
+			
+			#Add the current value to sum and increment the item count
+			sum=$((sum + $i))
+			(( count++ ))
+		done
+
+		#calculate the mean for the current line and append it to the mean vector string
+		mean=$(((sum + (count/2) * ((sum>0) * 2-1)) / count))
+		meanVector+="$mean	"
+
+	done < $meanTransposedFilePath
+	
+	#remove trailing tab
+	meanVector=${meanVector%?}
+
+	echo "$meanVector"	
+
+	#delete temp files
+	#if $filepath is used, the passed in file containing a matrix is deleted (that's bad)
+	#so instead the actual file name is used.
+	rm -f meanFile$$
+	rm -f meanTransposedFile$$
+}
+
+add(){
+
+	trap "echo 'Trap signal received: exiting'; exit 1" INT HUP TERM
+
+	#If the number of parameters is not equal to 2, exit the script
+	if [ "$#" != "2" ]
+	then
+		echo "Function requires two arguments." >&2
+		exit 1
+	#If the number of parameters is 2, make sure both are readable.
+	elif [ ! -r "$1" ] || [ ! -r "$2" ]
+	then
+		echo "Unreadable file." >&2
+		exit 1
+	
+	fi
+
+	#Get the dimensions of both matrices so they can be used to loop later
+	leftMatrixDims=$(dims $1)
+	rightMatrixDims=$(dims $2)
+
+	#If the dimensions are not equal, the matrices can not be added.
+	if [ "$leftMatrixDims" != "$rightMatrixDims" ]
+	then
+		echo "Matrices are not same dimensions." >&2
+		exit 1
+	fi
+	
+	#Get the number of rows from left matrix
+	numRows=$(echo "$leftMatrixDims" | cut -f 1 -d " ")
+	#Get the number of columns from left matrix
+	numColumns=$(echo "$leftMatrixDims" | cut -f 2 -d " ")
+
+	i="1"
+	#create a blank string which we will build up into the final matrix
+	newMatrix=""
+
+	#Read each line of the two matrices simultaneously.
+	while read leftLine && read rightLine <&3
+	do
+		#Loop through the items in each line for the number of items in each line
+		while [ $i -le $numColumns ]
+		do
+			#cut the i'th value from each line and add them together. Then add them to the string.
+			leftVal=$(echo "$leftLine" | cut -f $i)
+			rightVal=$(echo "$rightLine" | cut -f $i)
+			sum=$(( leftVal + rightVal ))
+			newMatrix+="$sum	"
+			(( i++ ))
+		done
+
+		#Set i back to one so that the next two lines are read correctly.
+		i="1"
+		#Remove the trailing tab from each line then append a newline
+		newMatrix=${newMatrix%?}
+		newMatrix+=$'\n'
+	done < $1 3<$2
+
+	echo -n "$newMatrix"
+}
+
+multiply(){
+	#Create temp file for use by function
+	transposedRightMatrixFilePath="transposedRightMatrix$$"
+
+	trap "rm -f transposedRightMatrix$$; echo 'Trap signal received: exiting'; exit 1" INT HUP TERM
+
+	#If the numberof parameters does not equal two, exit the script
+	if [ "$#" != "2" ]
+	then
+		echo "Function requires two arguments." >&2
+		exit 1
+	#If two parameters were given check they are readable, otherwise exit.
+	elif [ ! -r "$1" ] || [ ! -r "$2" ]
+	then
+		echo "Unreadable file." >&2
+		exit 1
+	fi
+
+	#Get the dimensions of both matrices so they can be used later.
+	leftMatrixDims=$(dims $1)
+	rightMatrixDims=$(dims $2)
+
+	#Cut the number of rows and columns from both matrices into separate variables.
+	numLeftRows=$(echo "$leftMatrixDims" | cut -f 1 -d " ")
+	numLeftColumns=$(echo "$leftMatrixDims" | cut -f 2 -d " ")
+	numRightRows=$(echo "$rightMatrixDims" | cut -f 1 -d " ")
+	numRightColumns=$(echo "$rightMatrixDims" | cut -f 2 -d " ")
+
+	#If the number of left matrix columns does not equal the number of right matrix rows, they cannot be multiplied.
+	if [ $numLeftColumns != $numRightRows ]
+	then
+		echo "Matrices can not be multiplied." >&2
+		exit 1
+	fi
+
+	#Transpose the right matrix so that rows can be compared to rows.
+	#This is easier then comparing a row to a column to perform the multiplications.
+	matrix transpose $2 > $transposedRightMatrixFilePath
+
+	i="1"
+	#Create an empty string which will build up the multiplied matrix
+	multipliedMatrix=""
+
+	#Read lines from the left matrix
+	while read leftLine
+	do
+		#Read lines from the right (transposed) matrix.
+		while read rightLine <&3
+		do
+			dotProduct="0"
+
+			#Loop for each item in each line
+			while [ $i -le $numLeftColumns ]
+			do
+				#Cut the i'th value from leftline and rightline and multiply them together then add to the last to get the dotproduct.
+				leftValue=$(echo "$leftLine" | cut -f $i)
+				rightValue=$(echo "$rightLine" | cut -f $i)
+				dotProduct=$(( dotProduct + (leftValue * rightValue) ))
+				
+				(( i++ ))
+			done
+
+			#Add the dot product to the completed string.
+			multipliedMatrix+="$dotProduct	"
+			i="1"
+		done 3< $transposedRightMatrixFilePath
+
+		#Remove trailing tab and append newline
+		multipliedMatrix=${multipliedMatrix%?}
+		multipliedMatrix+=$'\n'
+	done < $1
+	
+	echo -n "$multipliedMatrix"
+
+	#delete temp file
+	rm -f transposedRightMatrix$$
+
+}
+
+#main
+if [ "$1" == "dims" ] || [ "$1" == "transpose" ] || [ "$1" == "mean" ] || [ "$1" == "add" ] || [ "$1" == "multiply" ]
+then
+	#Call matrix with cmd line argument #1 followed by arguments #2 on
+	$1 "${@:2}"
+else
+	"Matrix does not have given function." >&2
+	exit 1
+fi
